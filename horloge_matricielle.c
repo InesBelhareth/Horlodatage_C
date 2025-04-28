@@ -4,159 +4,174 @@
 #include <unistd.h>
 #include <arpa/inet.h>
 
-#define SERVER_IP "127.0.0.1"
+#define IP_SERVEUR "127.0.0.1"
 #define PORT 8080
-#define NUM_PROCESSES 4
-#define BUFFER_SIZE 2048
+#define NB_PROCESSUS 4
+#define TAILLE_BUFFER 2048
 
-int clock_matrix[NUM_PROCESSES][NUM_PROCESSES] = {0};
-int my_id = 0;
+int horloge[NB_PROCESSUS][NB_PROCESSUS] = {0};
+int id_processus = 0;
 
-void initialize_clock() {
-    memset(clock_matrix, 0, sizeof(clock_matrix));
-    clock_matrix[my_id][my_id] = 1;
+/* Initialise l'horloge matricielle */
+void initialiser_horloge() {
+    memset(horloge, 0, sizeof(horloge));
+    horloge[id_processus][id_processus] = 1;
+    printf("[Processus %d] Horloge initialisée\n", id_processus);
 }
 
-void print_clock() {
-    printf("\n[Process %d] Current Matrix Clock:\n", my_id);
-    for (int i = 0; i < NUM_PROCESSES; i++) {
+/* Affiche l'état courant de l'horloge */
+void afficher_horloge() {
+    printf("\n[Processus %d] État de l'horloge:\n", id_processus);
+    for (int i = 0; i < NB_PROCESSUS; i++) {
         printf("P%d: [", i);
-        for (int j = 0; j < NUM_PROCESSES; j++) {
-            printf("%3d ", clock_matrix[i][j]);
+        for (int j = 0; j < NB_PROCESSUS; j++) {
+            printf("%2d ", horloge[i][j]);
         }
         printf("]\n");
     }
 }
 
-void local_event() {
-    clock_matrix[my_id][my_id]++;
-    printf("\n[Process %d] Local event occurred\n", my_id);
-    print_clock();
+/* Exécute un événement local */
+void evenement_local() {
+    horloge[id_processus][id_processus]++;
+    printf("\n[Processus %d] Exécution événement local\n", id_processus);
+    afficher_horloge();
 }
 
-void update_clock(int received[NUM_PROCESSES][NUM_PROCESSES]) {
-    for (int i = 0; i < NUM_PROCESSES; i++) {
-        for (int j = 0; j < NUM_PROCESSES; j++) {
-            if (received[i][j] > clock_matrix[i][j]) {
-                clock_matrix[i][j] = received[i][j];
+void mettre_a_jour(int recue[NB_PROCESSUS][NB_PROCESSUS]) {
+    printf("\n[Processus %d] Mise à jour à partir des données reçues:\n", id_processus);
+    
+    for (int i = 0; i < NB_PROCESSUS; i++) {
+        for (int j = 0; j < NB_PROCESSUS; j++) {
+            if (recue[i][j] > horloge[i][j]) {
+                printf("Mise à jour P%d[%d]: %d → %d\n", i, j, horloge[i][j], recue[i][j]);
+                horloge[i][j] = recue[i][j];
             }
         }
     }
-    printf("\n[Process %d] Clock updated after receiving\n", my_id);
-    print_clock();
+
+    // *** Incrémenter l'horloge du processus récepteur pour l'événement de réception ***
+    horloge[id_processus][id_processus]++;
+
+    afficher_horloge();
 }
 
-void send_message(int sock) {
-    // Increment before sending
-    clock_matrix[my_id][my_id]++;
+
+/* Envoie l'horloge courante au serveur */
+void envoyer_horloge(int sock) {
+    horloge[id_processus][id_processus]++; // Incrément avant envoi
     
-    // Prepare message
-    char buffer[BUFFER_SIZE] = {0};
+    char buffer[TAILLE_BUFFER] = {0};
     char temp[20];
     
-    strcat(buffer, "MATRIX|");
-    for (int i = 0; i < NUM_PROCESSES; i++) {
-        for (int j = 0; j < NUM_PROCESSES; j++) {
-            sprintf(temp, "%d,", clock_matrix[i][j]);
+    // Format: "MATRICE|id|valeur,valeur,...;..."
+    strcat(buffer, "MATRICE|");
+    sprintf(temp, "%d|", id_processus);
+    strcat(buffer, temp);
+    
+    for (int i = 0; i < NB_PROCESSUS; i++) {
+        for (int j = 0; j < NB_PROCESSUS; j++) {
+            sprintf(temp, "%d,", horloge[i][j]);
             strcat(buffer, temp);
         }
         strcat(buffer, ";");
     }
     
     if (send(sock, buffer, strlen(buffer), 0) < 0) {
-        perror("Send failed");
+        perror("Erreur envoi");
         exit(EXIT_FAILURE);
     }
     
-    printf("\n[Process %d] Sent matrix clock\n", my_id);
-    print_clock();
+    printf("\n[Processus %d] Horloge envoyée\n", id_processus);
+    afficher_horloge();
 }
 
-void receive_message(int sock) {
-    char buffer[BUFFER_SIZE] = {0};
-    int bytes = recv(sock, buffer, BUFFER_SIZE-1, 0);
+/* Reçoit et traite une horloge */
+void recevoir_horloge(int sock) {
+    char buffer[TAILLE_BUFFER] = {0};
+    int octets = recv(sock, buffer, TAILLE_BUFFER-1, 0);
     
-    if (bytes <= 0) {
-        if (bytes == 0) {
-            printf("Server disconnected\n");
+    if (octets <= 0) {
+        if (octets == 0) {
+            printf("Connexion fermée par le serveur\n");
         } else {
-            perror("Receive error");
+            perror("Erreur réception");
         }
         close(sock);
         exit(EXIT_FAILURE);
     }
     
-    buffer[bytes] = '\0';
+    buffer[octets] = '\0';
     
-    // Parse message
-    if (strncmp(buffer, "MATRIX|", 7) != 0) {
-        fprintf(stderr, "Invalid message format\n");
+    if (strncmp(buffer, "MATRICE|", 8) != 0) {
+        fprintf(stderr, "Message invalide reçu\n");
         return;
     }
     
-    int received[NUM_PROCESSES][NUM_PROCESSES] = {0};
-    char *ptr = buffer + 7; // Skip "MATRIX|"
+    int recue[NB_PROCESSUS][NB_PROCESSUS] = {0};
+    char *ptr = buffer + 8;
+    int expediteur = atoi(ptr);
+    ptr = strchr(ptr, '|') + 1;
     
-    for (int i = 0; i < NUM_PROCESSES; i++) {
-        char *line = strtok_r(ptr, ";", &ptr);
-        if (!line) break;
+    printf("\nReçu du processus %d:\n", expediteur);
+    
+    for (int i = 0; i < NB_PROCESSUS; i++) {
+        char *ligne = strtok_r(ptr, ";", &ptr);
+        if (!ligne) break;
         
-        for (int j = 0; j < NUM_PROCESSES; j++) {
-            char *val = strtok_r(line, ",", &line);
+        for (int j = 0; j < NB_PROCESSUS; j++) {
+            char *val = strtok_r(ligne, ",", &ligne);
             if (!val) break;
-            received[i][j] = atoi(val);
+            recue[i][j] = atoi(val);
         }
     }
     
-    update_clock(received);
+    mettre_a_jour(recue);
 }
 
 int main() {
-    printf("Enter process ID (0-%d): ", NUM_PROCESSES-1);
-    scanf("%d", &my_id);
+    printf("Entrez l'ID du processus (0-%d): ", NB_PROCESSUS-1);
+    scanf("%d", &id_processus);
     getchar();
     
-    if (my_id < 0 || my_id >= NUM_PROCESSES) {
-        fprintf(stderr, "Invalid process ID\n");
-        exit(EXIT_FAILURE);
+    if (id_processus < 0 || id_processus >= NB_PROCESSUS) {
+        fprintf(stderr, "ID invalide\n");
+        return 1;
     }
     
-    initialize_clock();
+    initialiser_horloge();
     
     int sock = socket(AF_INET, SOCK_STREAM, 0);
-    struct sockaddr_in serv_addr;
+    struct sockaddr_in serveur_addr = {
+        .sin_family = AF_INET,
+        .sin_port = htons(PORT)
+    };
+    inet_pton(AF_INET, IP_SERVEUR, &serveur_addr.sin_addr);
     
-    serv_addr.sin_family = AF_INET;
-    serv_addr.sin_port = htons(PORT);
-    inet_pton(AF_INET, SERVER_IP, &serv_addr.sin_addr);
-    
-    if (connect(sock, (struct sockaddr*)&serv_addr, sizeof(serv_addr)) < 0) {
-        perror("Connection failed");
-        exit(EXIT_FAILURE);
+    if (connect(sock, (struct sockaddr*)&serveur_addr, sizeof(serveur_addr)) < 0) {
+        perror("Échec connexion");
+        return 1;
     }
     
-    printf("Process %d connected to server\n", my_id);
+    printf("[Processus %d] Connecté au serveur\n", id_processus);
     
-    // Main loop
-    for (int i = 0; i < 3; i++) {
-        local_event();
+    /* Séquence de 5 événements locaux */
+    for (int i = 1; i <= 5; i++) {
         sleep(1);
-        
-        send_message(sock);
-        sleep(1);
-        
-        receive_message(sock);
-        sleep(2);
+        evenement_local();
     }
     
-    // Final synchronization
-    send_message(sock);
-    sleep(1);
-    receive_message(sock);
-    
-    printf("\n[Process %d] Final clock state:\n", my_id);
-    print_clock();
+    /* Séquence de 4 émissions/réceptions */
+    for (int i = 1; i <= 4; i++) {
+        sleep(1);
+        printf("\n--- Échange %d ---\n", i);
+        envoyer_horloge(sock);
+        recevoir_horloge(sock);
+    }
     
     close(sock);
+    printf("\n[Processus %d] État final:\n", id_processus);
+    afficher_horloge();
+    
     return 0;
 }
