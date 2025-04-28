@@ -15,7 +15,7 @@ int id_processus = 0;
 /* Initialise l'horloge matricielle */
 void initialiser_horloge() {
     memset(horloge, 0, sizeof(horloge));
-    horloge[id_processus][id_processus] = 1;
+    horloge[id_processus][id_processus] = 0;
     printf("[Processus %d] Horloge initialisée\n", id_processus);
 }
 
