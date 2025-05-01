@@ -1,6 +1,0 @@
-Exécution:
- make
-./serveur
-./horloge_scalaire 
-./horloge_matricielle
- ./horloge_vectorielle
